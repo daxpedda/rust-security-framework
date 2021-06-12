@@ -105,10 +105,10 @@ impl SecCertificate {
             unsafe { CFString::wrap_under_get_rule(*public_key_type.deref() as _) },
             public_keysize_val,
         )?;
-        let public_key_data = public_key.external_representation()?;
+        let public_key_data = public_key.export().ok()?;
         let mut out = Vec::with_capacity(hdr_bytes.len() + public_key_data.len() as usize);
         out.extend_from_slice(hdr_bytes);
-        out.extend_from_slice(public_key_data.bytes());
+        out.extend_from_slice(&public_key_data);
         Some(out)
     }
 

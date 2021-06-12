@@ -23,6 +23,25 @@ extern "C" {
 
     pub static kSecAttrKeySizeInBits: CFStringRef;
 
+    pub static kSecPrivateKeyAttrs: CFStringRef;
+    pub static kSecPublicKeyAttrs: CFStringRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub static kSecAttrTokenID: CFStringRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub static kSecAttrTokenIDSecureEnclave: CFStringRef;
+    pub static kSecAttrIsPermanent: CFStringRef;
+    pub static kSecAttrApplicationTag: CFStringRef;
+    pub static kSecAttrCanEncrypt: CFStringRef;
+    pub static kSecAttrCanDecrypt: CFStringRef;
+    pub static kSecAttrCanDerive: CFStringRef;
+    pub static kSecAttrCanSign: CFStringRef;
+    pub static kSecAttrCanVerify: CFStringRef;
+    #[cfg(any(feature = "OSX_10_10", target_os = "ios"))]
+    pub static kSecAttrAccessControl: CFStringRef;
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    pub static kSecAttrSynchronizable: CFStringRef;
+    pub static kSecAttrIsExtractable: CFStringRef;
+
     pub static kSecAttrKeyTypeECSECPrimeRandom: CFStringRef;
     pub static kSecAttrKeyTypeRSA: CFStringRef;
     #[cfg(target_os = "macos")]
@@ -44,4 +63,25 @@ extern "C" {
 
     pub static kSecAttrAccessGroup: CFStringRef;
     pub static kSecAttrAccessGroupToken: CFStringRef;
+
+    pub static kSecAttrKeyClass: CFStringRef;
+    pub static kSecAttrKeyClassPublic: CFStringRef;
+    pub static kSecAttrKeyClassPrivate: CFStringRef;
+    pub static kSecAttrKeyClassSymmetric: CFStringRef;
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub static kSecKeyKeyExchangeParameterRequestedSize: CFStringRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub static kSecKeyKeyExchangeParameterSharedInfo: CFStringRef;
+
+    #[cfg(any(feature = "OSX_10_10", target_os = "ios"))]
+    pub static kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly: CFStringRef;
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    pub static kSecAttrAccessibleWhenUnlockedThisDeviceOnly: CFStringRef;
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    pub static kSecAttrAccessibleWhenUnlocked: CFStringRef;
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    pub static kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: CFStringRef;
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    pub static kSecAttrAccessibleAfterFirstUnlock: CFStringRef;
 }

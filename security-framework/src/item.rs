@@ -11,7 +11,9 @@ use core_foundation::string::CFString;
 use core_foundation_sys::base::{CFCopyDescription, CFGetTypeID, CFRelease, CFTypeRef};
 use core_foundation_sys::string::CFStringRef;
 use security_framework_sys::item::*;
-use security_framework_sys::keychain_item::SecItemCopyMatching;
+use security_framework_sys::keychain_item::{
+    kSecMatchItemList, SecItemCopyMatching, SecItemDelete,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::ptr;
@@ -79,8 +81,8 @@ impl Limit {
     #[inline]
     fn to_value(self) -> CFType {
         match self {
-            Self::All => unsafe { CFString::wrap_under_get_rule(kSecMatchLimitAll).as_CFType() }
-            Self::Max(l) => CFNumber::from(l).as_CFType()
+            Self::All => unsafe { CFString::wrap_under_get_rule(kSecMatchLimitAll).as_CFType() },
+            Self::Max(l) => CFNumber::from(l).as_CFType(),
         }
     }
 }
@@ -100,11 +102,15 @@ pub struct ItemSearchOptions {
     keychains: Option<CFArray<CFType>>,
     class: Option<ItemClass>,
     load_refs: bool,
+    load_persistent_refs: bool,
     load_attributes: bool,
     load_data: bool,
     limit: Option<Limit>,
     label: Option<CFString>,
     access_group: Option<CFString>,
+    application_tag: Option<CFString>,
+    key_class: Option<KeyClass>,
+    match_item_list: Option<CFArray<CFType>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -130,12 +136,19 @@ impl ItemSearchOptions {
         self
     }
 
-
     /// Load Security Framework objects (`SecCertificate`, `SecKey`, etc) for
     /// the results.
     #[inline(always)]
     pub fn load_refs(&mut self, load_refs: bool) -> &mut Self {
         self.load_refs = load_refs;
+        self
+    }
+
+    /// Load persistent references to Security Framework objects for
+    /// the results.
+    #[inline(always)]
+    pub fn load_persistent_refs(&mut self, load_persistent_refs: bool) -> &mut Self {
+        self.load_persistent_refs = load_persistent_refs;
         self
     }
 
@@ -174,15 +187,44 @@ impl ItemSearchOptions {
     /// Sets kSecAttrAccessGroup to kSecAttrAccessGroupToken
     #[inline(always)]
     pub fn access_group_token(&mut self) -> &mut Self {
-        self.access_group = unsafe { Some(CFString::wrap_under_get_rule(kSecAttrAccessGroupToken)) };
+        self.access_group =
+            unsafe { Some(CFString::wrap_under_get_rule(kSecAttrAccessGroupToken)) };
         self
     }
 
-    /// Search for objects.
-    pub fn search(&self) -> Result<Vec<SearchResult>> {
-        unsafe {
-            let mut params = vec![];
+    /// Search for an item with the given application tag.
+    #[inline(always)]
+    pub fn application_tag(&mut self, application_tag: &str) -> &mut Self {
+        self.application_tag = Some(CFString::new(application_tag));
+        self
+    }
 
+    /// Search only for items of the specified key class.
+    #[inline(always)]
+    pub fn key_class(&mut self, key_class: KeyClass) -> &mut Self {
+        self.key_class = Some(key_class);
+        self
+    }
+
+    /// Search for the given items.
+    #[inline(always)]
+    pub fn match_item_list<'a>(
+        &mut self,
+        match_item_list: impl IntoIterator<Item = &'a Reference>,
+    ) -> &mut Self {
+        self.match_item_list = Some(CFArray::from_CFTypes(
+            &match_item_list
+                .into_iter()
+                .map(Reference::to_value)
+                .collect::<Vec<_>>(),
+        ));
+        self
+    }
+
+    fn attributes(&self) -> CFDictionary<CFString, CFType> {
+        let mut params = vec![];
+
+        unsafe {
             if let Some(ref keychains) = self.keychains {
                 params.push((
                     CFString::wrap_under_get_rule(kSecMatchSearchList),
@@ -197,6 +239,13 @@ impl ItemSearchOptions {
             if self.load_refs {
                 params.push((
                     CFString::wrap_under_get_rule(kSecReturnRef),
+                    CFBoolean::true_value().as_CFType(),
+                ));
+            }
+
+            if self.load_persistent_refs {
+                params.push((
+                    CFString::wrap_under_get_rule(kSecReturnPersistentRef),
                     CFBoolean::true_value().as_CFType(),
                 ));
             }
@@ -218,7 +267,7 @@ impl ItemSearchOptions {
             if let Some(limit) = self.limit {
                 params.push((
                     CFString::wrap_under_get_rule(kSecMatchLimit),
-                    limit.to_value()
+                    limit.to_value(),
                 ));
             }
 
@@ -236,8 +285,36 @@ impl ItemSearchOptions {
                 ));
             }
 
-            let params = CFDictionary::from_CFType_pairs(&params);
+            if let Some(ref application_tag) = self.application_tag {
+                params.push((
+                    CFString::wrap_under_get_rule(kSecAttrApplicationTag),
+                    application_tag.as_CFType(),
+                ));
+            }
 
+            if let Some(key_class) = self.key_class {
+                params.push((
+                    CFString::wrap_under_get_rule(kSecAttrKeyClass),
+                    key_class.to_value(),
+                ));
+            }
+
+            if let Some(match_item_list) = &self.match_item_list {
+                params.push((
+                    CFString::wrap_under_get_rule(kSecMatchItemList),
+                    match_item_list.as_CFType(),
+                ));
+            }
+        }
+
+        CFDictionary::from_CFType_pairs(&params)
+    }
+
+    /// Search for objects.
+    pub fn search(&self) -> Result<Vec<SearchResult>> {
+        let params = self.attributes();
+
+        unsafe {
             let mut ret = ptr::null();
             cvt(SecItemCopyMatching(params.as_concrete_TypeRef(), &mut ret))?;
             let type_id = CFGetTypeID(ret);
@@ -258,6 +335,12 @@ impl ItemSearchOptions {
 
             Ok(items)
         }
+    }
+
+    /// Delete objects.
+    pub fn delete(&self) -> Result<()> {
+        let params = self.attributes();
+        cvt(unsafe { SecItemDelete(params.as_concrete_TypeRef()) })
     }
 }
 
@@ -303,6 +386,8 @@ unsafe fn get_item(item: CFTypeRef) -> SearchResult {
         Reference::Key(SecKey::wrap_under_get_rule(item as *mut _))
     } else if type_id == SecIdentity::type_id() {
         Reference::Identity(SecIdentity::wrap_under_get_rule(item as *mut _))
+    } else if type_id == CFData::type_id() {
+        Reference::PersistentReference(CFData::wrap_under_get_rule(item as *mut _).to_vec())
     } else {
         panic!("Got bad type from SecItemCopyMatching: {}", type_id);
     };
@@ -324,8 +409,26 @@ pub enum Reference {
     /// Only defined on OSX
     #[cfg(target_os = "macos")]
     KeychainItem(crate::os::macos::keychain_item::SecKeychainItem),
+    /// A persistent reference.
+    PersistentReference(Vec<u8>),
     #[doc(hidden)]
     __NonExhaustive,
+}
+
+impl Reference {
+    fn to_value(&self) -> CFType {
+        match self {
+            Reference::Identity(identity) => identity.as_CFType(),
+            Reference::Certificate(certificate) => certificate.as_CFType(),
+            Reference::Key(key) => key.as_CFType(),
+            #[cfg(target_os = "macos")]
+            Reference::KeychainItem(keychain_item) => keychain_item.as_CFType(),
+            Reference::PersistentReference(persistent_reference) => {
+                CFData::from_buffer(persistent_reference).as_CFType()
+            }
+            Reference::__NonExhaustive => unreachable!(),
+        }
+    }
 }
 
 /// An individual search result.
@@ -397,6 +500,161 @@ impl SearchResult {
                 Some(retmap)
             },
             _ => None,
+        }
+    }
+}
+
+/// Types of `SecKey`s.
+#[non_exhaustive]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[allow(missing_docs)]
+pub enum KeyType {
+    Rsa,
+    #[cfg(target_os = "macos")]
+    Dsa,
+    #[cfg(target_os = "macos")]
+    Aes,
+    #[cfg(target_os = "macos")]
+    Des,
+    #[cfg(target_os = "macos")]
+    TripleDes,
+    #[cfg(target_os = "macos")]
+    Rc4,
+    #[cfg(target_os = "macos")]
+    Cast,
+    /// Use `EcSec` instead. Querying or searching may still result or need `Ec`.
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    Ec,
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    EcSec,
+}
+
+#[allow(missing_docs)]
+impl KeyType {
+    #[deprecated = "use `KeyType::Rsa`"]
+    #[inline(always)]
+    pub fn rsa() -> Self {
+        Self::Rsa
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::Dsa`"]
+    #[inline(always)]
+    pub fn dsa() -> Self {
+        Self::Dsa
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::Aes`"]
+    #[inline(always)]
+    pub fn aes() -> Self {
+        Self::Aes
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::Des`"]
+    #[inline(always)]
+    pub fn des() -> Self {
+        Self::Des
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::TripleDes`"]
+    #[inline(always)]
+    pub fn triple_des() -> Self {
+        Self::TripleDes
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::Rc4`"]
+    #[inline(always)]
+    pub fn rc4() -> Self {
+        Self::Rc4
+    }
+
+    #[cfg(target_os = "macos")]
+    #[deprecated = "use `KeyType::Cast`"]
+    #[inline(always)]
+    pub fn cast() -> Self {
+        Self::Cast
+    }
+
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    #[deprecated = "use `KeyType::Ec`"]
+    #[inline(always)]
+    pub fn ec() -> Self {
+        #[allow(deprecated)]
+        Self::Ec
+    }
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    #[deprecated = "use `KeyType::EcSec`"]
+    #[inline(always)]
+    pub fn ec_sec() -> Self {
+        Self::EcSec
+    }
+
+    pub(crate) fn to_str(self) -> CFString {
+        unsafe {
+            CFString::wrap_under_get_rule(match self {
+                KeyType::Rsa => kSecAttrKeyTypeRSA,
+                KeyType::Dsa => kSecAttrKeyTypeDSA,
+                KeyType::Aes => kSecAttrKeyTypeAES,
+                KeyType::Des => kSecAttrKeyTypeDES,
+                KeyType::TripleDes => kSecAttrKeyType3DES,
+                KeyType::Rc4 => kSecAttrKeyTypeRC4,
+                KeyType::Cast => kSecAttrKeyTypeCAST,
+                #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+                #[allow(deprecated)]
+                KeyType::Ec => kSecAttrKeyTypeEC,
+                #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+                KeyType::EcSec => kSecAttrKeyTypeECSECPrimeRandom,
+            })
+        }
+    }
+
+    pub(crate) fn from_str(string: CFStringRef) -> Self {
+        unsafe {
+            match string {
+                type_ if type_ == kSecAttrKeyTypeRSA => KeyType::Rsa,
+                type_ if type_ == kSecAttrKeyTypeDSA => KeyType::Dsa,
+                type_ if type_ == kSecAttrKeyTypeAES => KeyType::Aes,
+                type_ if type_ == kSecAttrKeyTypeDES => KeyType::Des,
+                type_ if type_ == kSecAttrKeyType3DES => KeyType::TripleDes,
+                type_ if type_ == kSecAttrKeyTypeRC4 => KeyType::Rc4,
+                type_ if type_ == kSecAttrKeyTypeCAST => KeyType::Cast,
+                #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+                #[allow(deprecated)]
+                type_ if type_ == kSecAttrKeyTypeEC => KeyType::Ec,
+                #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+                type_ if type_ == kSecAttrKeyTypeECSECPrimeRandom => KeyType::EcSec,
+                _ => unreachable!("invalid string"),
+            }
+        }
+    }
+}
+
+/// Classes of `SecKey`s.
+#[derive(Debug, Copy, Clone)]
+pub enum KeyClass {
+    /// A public key of a public-private pair.
+    Public,
+    /// A private key of a public-private pair.
+    Private,
+    /// A private key used for symmetric-key encryption and decryption.
+    Symmetric,
+}
+
+impl KeyClass {
+    pub(crate) fn to_value(self) -> CFType {
+        unsafe {
+            let _type = match self {
+                Self::Public => kSecAttrKeyClassPublic,
+                Self::Private => kSecAttrKeyClassPrivate,
+                Self::Symmetric => kSecAttrKeyClassSymmetric,
+            };
+
+            CFType::wrap_under_get_rule(_type as *const _)
         }
     }
 }

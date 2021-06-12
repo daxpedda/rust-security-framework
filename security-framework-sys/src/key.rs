@@ -1,4 +1,6 @@
 use core_foundation_sys::base::CFTypeID;
+#[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+use core_foundation_sys::base::{Boolean, CFIndex};
 use core_foundation_sys::data::CFDataRef;
 use core_foundation_sys::dictionary::CFDictionaryRef;
 use core_foundation_sys::error::CFErrorRef;
@@ -21,7 +23,18 @@ extern "C" {
     ) -> SecKeyRef;
 
     #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCreateRandomKey(parameters: CFDictionaryRef, error: *mut CFErrorRef) -> SecKeyRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCopyPublicKey(key: SecKeyRef) -> SecKeyRef;
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
     pub fn SecKeyCopyExternalRepresentation(key: SecKeyRef, error: *mut CFErrorRef) -> CFDataRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCreateWithData(
+        keyData: CFDataRef,
+        attributes: CFDictionaryRef,
+        error: *mut CFErrorRef,
+    ) -> SecKeyRef;
     #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
     pub fn SecKeyCopyAttributes(key: SecKeyRef) -> CFDictionaryRef;
 
@@ -30,6 +43,46 @@ extern "C" {
         key: SecKeyRef,
         algorithm: SecKeyAlgorithm,
         dataToSign: CFDataRef,
+        error: *mut CFErrorRef,
+    ) -> CFDataRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyVerifySignature(
+        key: SecKeyRef,
+        algorithm: SecKeyAlgorithm,
+        signedData: CFDataRef,
+        signature: CFDataRef,
+        error: *mut CFErrorRef,
+    ) -> Boolean;
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCreateEncryptedData(
+        key: SecKeyRef,
+        algorithm: SecKeyAlgorithm,
+        plaintext: CFDataRef,
+        error: *mut CFErrorRef,
+    ) -> CFDataRef;
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCreateDecryptedData(
+        key: SecKeyRef,
+        algorithm: SecKeyAlgorithm,
+        ciphertext: CFDataRef,
+        error: *mut CFErrorRef,
+    ) -> CFDataRef;
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyIsAlgorithmSupported(
+        key: SecKeyRef,
+        operation: SecKeyOperationType,
+        algorithm: SecKeyAlgorithm,
+    ) -> Boolean;
+    pub fn SecKeyGetBlockSize(key: SecKeyRef) -> usize;
+
+    #[cfg(any(feature = "OSX_10_12", target_os = "ios"))]
+    pub fn SecKeyCopyKeyExchangeResult(
+        privateKey: SecKeyRef,
+        algorithm: SecKeyAlgorithm,
+        publicKey: SecKeyRef,
+        parameters: CFDictionaryRef,
         error: *mut CFErrorRef,
     ) -> CFDataRef;
 }
@@ -41,6 +94,7 @@ macro_rules! names {
             $(pub static $x: SecKeyAlgorithm;)*
         }
 
+        #[derive(Clone, Debug)]
         pub enum Algorithm {
             $( $i, )*
             #[doc(hidden)]
@@ -152,3 +206,10 @@ names! {
     RSASignatureMessagePSSSHA384 => kSecKeyAlgorithmRSASignatureMessagePSSSHA384,
     RSASignatureMessagePSSSHA512 => kSecKeyAlgorithmRSASignatureMessagePSSSHA512
 }
+
+pub type SecKeyOperationType = CFIndex;
+pub const kSecKeyOperationTypeDecrypt: SecKeyOperationType = 3;
+pub const kSecKeyOperationTypeEncrypt: SecKeyOperationType = 2;
+pub const kSecKeyOperationTypeKeyExchange: SecKeyOperationType = 4;
+pub const kSecKeyOperationTypeSign: SecKeyOperationType = 0;
+pub const kSecKeyOperationTypeVerify: SecKeyOperationType = 1;
